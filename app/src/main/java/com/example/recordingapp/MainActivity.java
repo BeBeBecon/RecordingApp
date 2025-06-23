@@ -19,6 +19,7 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import java.io.File;
 
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -161,6 +162,7 @@ public class MainActivity extends AppCompatActivity {
     private void startRecordingService() {
         addLog("RecordingServiceの開始を試みます。");
         Intent serviceIntent = new Intent(this, RecordingService.class);
+        serviceIntent.setAction(RecordingService.ACTION_START_RECORDING);
 
         // Android 8.0 (API 26) 以降では、フォアグラウンドサービスとして開始する必要がある
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -177,8 +179,21 @@ public class MainActivity extends AppCompatActivity {
     private void stopRecordingService() {
         addLog("RecordingServiceの停止を試みます。");
         Intent serviceIntent = new Intent(this, RecordingService.class);
-        stopService(serviceIntent);
+        serviceIntent.setAction(RecordingService.ACTION_STOP_RECORDING);
+        startService(serviceIntent);
         updateUI(false); // UIを「待機中」状態に更新
+
+        // ↓↓↓ ここからが最後の追加部分です ↓↓↓
+        // 完了報告を待たずに、UIに直接メッセージを表示する
+        addLog("--------------------");
+        addLog("FILE_IO: 録音を停止し、ファイルの保存処理を開始しました。");
+        addLog("FILE_IO: 保存先は以下のフォルダを確認してください。");
+        // getExternalFilesDir(null) を使って、保存先フォルダのパスを取得して表示
+        File storageDir = getExternalFilesDir(null);
+        if (storageDir != null) {
+            addLog("PATH: " + storageDir.getAbsolutePath());
+        }
+        addLog("--------------------");
     }
 
     /**

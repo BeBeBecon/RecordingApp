@@ -20,10 +20,13 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.Locale;
 
+// extends Service という部分が「このRecordingServiceクラスは、AndroidのService部品としてのルールブックに従います」という宣言にあたる。
+// サービス開始(ServiceIntent)するときは、OSは onStartCommand() という名前のメソッドを呼びますね、のようなもの。
 public class RecordingService extends Service {
 
     private MediaRecorder mediaRecorder;
     private String outputFilePath;
+    private boolean isRecording = false;
 
     // 通知チャンネルのID
     private static final String CHANNEL_ID = "RecordingServiceChannel";
@@ -33,6 +36,8 @@ public class RecordingService extends Service {
     // MainActivityにログを送信するためのアクション定義
     public static final String ACTION_UPDATE_LOG = "com.example.recordingapp.UPDATE_LOG";
     public static final String EXTRA_LOG_MESSAGE = "extra_log_message";
+    public static final String ACTION_START_RECORDING = "com.example.recordingapp.ACTION_START";
+    public static final String ACTION_STOP_RECORDING = "com.example.recordingapp.ACTION_STOP";
 
     @Override
     public void onCreate() {
@@ -45,26 +50,37 @@ public class RecordingService extends Service {
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         // サービスが開始されるたびに呼ばれる
-        sendToLog("LIFECYCLE: RecordingService#onStartCommand: サービスが開始コマンドを受け取りました。");
-        createNotificationChannel();
+        // Intentがnullでない、かつアクションが指定されている場合のみ処理
+        if (intent != null && intent.getAction() != null) {
+            switch (intent.getAction()) {
+                case ACTION_START_RECORDING:
+                    sendToLog("LIFECYCLE: RecordingService#onStartCommand: サービスが開始コマンドを受け取りました。");
 
-        // 通知を作成
-        Intent notificationIntent = new Intent(this, MainActivity.class);
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE);
-        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setContentTitle("録音サービス")
-                .setContentText("バックグラウンドで録音を実行中です。")
-                .setSmallIcon(android.R.drawable.ic_media_play)
-                .setContentIntent(pendingIntent)
-                .build();
+                    // 通知とフォアグラウンド化の処理
+                    createNotificationChannel();
+                    Intent notificationIntent = new Intent(this, MainActivity.class);
+                    PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, notificationIntent, PendingIntent.FLAG_IMMUTABLE);
+                    Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)
+                            .setContentTitle("録音サービス")
+                            .setContentText("バックグラウンドで録音を実行中です。")
+                            .setSmallIcon(android.R.drawable.ic_media_play)
+                            .setContentIntent(pendingIntent)
+                            .build();
+                    startForeground(NOTIFICATION_ID, notification);
+                    sendToLog("SYSTEM: startForeground() を呼び出し、フォアグラウンドサービスを開始しました。");
 
-        // フォアグラウンドサービスとして開始
-        // これにより、Androidシステムからサービスがキルされにくくなる
-        startForeground(NOTIFICATION_ID, notification);
-        sendToLog("SYSTEM: startForeground() を呼び出し、フォアグラウンドサービスを開始しました。");
+                    // 録音処理を開始
+                    startRecording();
+                    break;
 
-        // 録音処理を開始
-        startRecording();
+                case ACTION_STOP_RECORDING:
+                    sendToLog("LIFECYCLE: RecordingService#onStartCommand: サービスが停止コマンドを受け取りました。");
+                    // 録音を停止し、サービス自身も停止する
+                    stopRecording();
+                    stopSelf(); // サービス自身に終了を命令する
+                    break;
+            }
+        }
 
         // START_STICKY: システムによってサービスが強制終了された場合、システムがサービスを再作成する
         return START_STICKY;
@@ -74,59 +90,56 @@ public class RecordingService extends Service {
      * 録音を開始する処理
      */
     private void startRecording() {
-        sendToLog("--------------------");
-        sendToLog("ACTION: 録音処理を開始します...");
+        // デバッグ用の特別なタグ
+        final String TAG = "RECORDER_DEBUG";
+        Log.d(TAG, "startRecording: メソッドが開始されました。");
 
         if (mediaRecorder != null) {
+            Log.d(TAG, "startRecording: 既存のmediaRecorderインスタンスを解放します。");
             mediaRecorder.release();
         }
-
-        // === MediaRecorderの状態遷移 ===
-        // Initial -> Initialized -> DataSourceConfigured -> Prepared -> Recording
-
-        // 1. MediaRecorderのインスタンスを生成 (State: Initial)
         mediaRecorder = new MediaRecorder();
-        sendToLog("[State: Initial] MediaRecorderインスタンスを生成しました。");
+        Log.d(TAG, "startRecording: new MediaRecorder() が完了しました。");
 
         try {
-            // 2. 入力ソースをマイクに設定 (State: Initial -> Initialized)
+            Log.d(TAG, "startRecording: 音声ソースをマイクに設定します...");
             mediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
-            sendToLog("[State: Initialized] 音声ソースをマイクに設定しました。");
+            Log.d(TAG, "startRecording: -> 成功");
 
-            // 3. 出力フォーマットを設定 (State: Initialized -> DataSourceConfigured)
+            Log.d(TAG, "startRecording: 出力フォーマットをMPEG_4に設定します...");
             mediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
-            sendToLog("[State: DataSourceConfigured] 出力フォーマットをMPEG_4に設定しました。");
+            Log.d(TAG, "startRecording: -> 成功");
 
-            // 4. 音声エンコーダーを設定 (多くのデバイスでサポートされている標準的な形式)
+            Log.d(TAG, "startRecording: 音声エンコーダーをAACに設定します...");
             mediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            sendToLog("[State: DataSourceConfigured] 音声エンコーダーをAACに設定しました。");
+            Log.d(TAG, "startRecording: -> 成功");
 
-            // 5. 出力ファイルパスを設定
             outputFilePath = getOutputFilePath();
+            Log.d(TAG, "startRecording: 出力ファイルパスを取得: " + outputFilePath);
             if (outputFilePath == null) {
-                sendToLog("ERROR: ファイルパスの取得に失敗しました。録音を中止します。");
-                stopSelf(); // サービスを停止
+                Log.e(TAG, "startRecording: ファイルパスがnullのため終了します。");
+                stopSelf();
                 return;
             }
             mediaRecorder.setOutputFile(outputFilePath);
-            sendToLog("[State: DataSourceConfigured] 出力ファイルパスを設定しました。");
-            sendToLog("FILE_IO: 保存先 -> " + outputFilePath);
+            Log.d(TAG, "startRecording: 出力ファイルパスの設定完了");
 
-
-            // 6. 準備 (State: DataSourceConfigured -> Prepared)
-            sendToLog("ACTION: MediaRecorder.prepare() を呼び出します...");
+            Log.d(TAG, "startRecording: mediaRecorder.prepare() を呼び出します...");
             mediaRecorder.prepare();
-            sendToLog("[State: Prepared] 録音の準備が完了しました。");
+            Log.d(TAG, "startRecording: -> 成功");
 
-            // 7. 録音開始 (State: Prepared -> Recording)
+            Log.d(TAG, "startRecording: mediaRecorder.start() を呼び出します...");
             mediaRecorder.start();
-            sendToLog("[State: Recording] 録音を実際に開始しました！");
+            Log.d(TAG, "startRecording: -> 成功！録音を完全に開始しました。");
+            isRecording = true;
 
-        } catch (IOException | IllegalStateException e) {
-            sendToLog("ERROR: MediaRecorderの準備または開始に失敗しました。 - " + e.getMessage());
-            Log.e("RecordingService", "startRecording failed", e);
-            // エラーが発生した場合、後片付け
-            stopSelf(); // サービスを停止
+        } catch (Exception e) {
+            // catchする例外をExceptionに広げて、あらゆるエラーを捕捉する
+            Log.e(TAG, "★★★★★★★★★★★★★★★★★★★★★★★★");
+            Log.e(TAG, "startRecording: 処理中に致命的なエラーが発生しました！", e);
+            Log.e(TAG, "★★★★★★★★★★★★★★★★★★★★★★★★");
+            isRecording = false;
+            stopSelf();
         }
     }
 
@@ -134,6 +147,10 @@ public class RecordingService extends Service {
      * 録音を停止し、リソースを解放する処理
      */
     private void stopRecording() {
+        if (!isRecording) { // もし録音中でなければ何もしない
+            return;
+        }
+        isRecording = false; // ←←← 停止処理に入ったので、まず旗を降ろす
         sendToLog("--------------------");
         sendToLog("ACTION: 録音処理を停止します...");
 
@@ -174,13 +191,15 @@ public class RecordingService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        // サービスが破棄されるときに呼ばれる
         sendToLog("--------------------");
         sendToLog("LIFECYCLE: RecordingService#onDestroy: サービスが破棄されます。");
-        stopRecording(); // 録音を停止してリソースをクリーンアップ
+        if (isRecording) { // ←←← 条件を追加
+            stopRecording(); // 録音中だった場合のみ停止処理を呼ぶ
+        }
         sendToLog("LIFECYCLE: サービスが完全に停止しました。");
         sendToLog("--------------------");
     }
+
 
     /**
      * アプリ固有の外部ストレージ領域に、録音ファイルの保存パスを生成する
